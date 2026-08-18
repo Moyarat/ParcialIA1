@@ -132,8 +132,9 @@ Las puertas desbloqueadas, las recargas realizadas y las herramientas recogidas 
 $$g(n) = \sum_{i=1}^{k} cost(a_i)$$
 ```
 
-donde $a_1, a_2, \dots, a_k$ es la secuencia de acciones desde el estado inicial hasta el nodo actual $n$.  Minimizar Pasos vs. Minimizar Costo:
-En este escenario los costos de movimiento son heterogéneos (existen corredores rápidos y caros, o lentos y baratos) y las operaciones físicas poseen costos distintos. Minimizar el número de pasos produciría planes subóptimos que eligen caminos cortos en pasos pero extremadamente costosos en batería. La función $g(n)$ garantiza la selección del plan con menor costo acumulado real
+  donde $a_1, a_2, \dots, a_k$ es la secuencia de acciones desde el estado inicial hasta el nodo actual $n$.  Minimizar Pasos vs. Minimizar Costo:
+  
+  En este escenario los costos de movimiento son heterogéneos (existen corredores rápidos y caros, o lentos y baratos) y las operaciones físicas poseen costos distintos. Minimizar el número de pasos produciría planes subóptimos que eligen caminos cortos en pasos pero extremadamente costosos en batería. La función $g(n)$ garantiza la selección del plan con menor costo acumulado real
 ---
 
 ## Estrategia de búsqueda
