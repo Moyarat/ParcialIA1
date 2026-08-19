@@ -24,7 +24,11 @@ necesita para saber qué podrá hacer después.
 s = ⟨ pos, bat, cargo, ground, env ⟩
 ```
 
-(completar)
+`pos` es la zona actual; `bat` es la batería restante; `cargo` contiene los
+IDs de llaves y herramientas y los materiales por tipo; `ground` registra la
+zona de cada objeto aún disponible; `env` registra puertas, paneles y
+estaciones. El grafo, los pesos, la capacidad y los costos son parámetros
+inmutables del escenario.
 
 ### Por qué cada variable es necesaria
 
@@ -60,13 +64,14 @@ Si se incluyera $g(n)$ o el historial dentro del Estado, dos rutas que alcancen 
 
 ### Cuándo dos configuraciones son el mismo estado
 
-De acuerdo con la especificación del escenario (§2.2), los materiales y herramientas del mismo tipo son físicamente equivalentes y no deben etiquetarse con IDs artificiales.
+Los materiales del mismo tipo se agrupan por cantidad. Las llaves y
+herramientas se mantienen por `id`, porque el contrato las referencia así.
 * Estructura Canónica:
-   - $cargo$ y $ground[z]$ se representan mediante contadores por tipo de objeto (Counter o tuplas ordenadas de pares (tipo_objeto, cantidad)), omitiendo identificadores individuales.
-  - El diccionario $ground$ se convierte a una tupla inmutable y ordenada alfabéticamente por zona: tuple(sorted((z, tuple(sorted(items.items()))) for z, items in ground.items())).  
+   - Los materiales usan contadores por tipo; las llaves y herramientas usan tuplas ordenadas de IDs.
+  - Las colecciones se convierten en tuplas inmutables ordenadas para que el estado pueda compararse y almacenarse en la frontera de búsqueda.
 
 * Igualdad y Hashing:
-  Se garantiza que para dos instancias de estado $s_A$ y $s_B$, s_A == s_B y hash(s_A) == hash(s_B) retornen verdadero si y solo si la posición del robot, nivel de batería, inv. de carga, distribución de objetos en el suelo y estado del entorno son exactamente idénticos.  
+   Dos estados son iguales si coinciden en posición, batería, carga, suelo y entorno persistente; no se distinguen copias equivalentes de un material, pero sí IDs distintos.
 
 ### Relevancia: objetos que ya no cambian el futuro
 
@@ -87,11 +92,12 @@ Las acciones internas del agente representan las operaciones físicas que el rob
 | **Acción Interna** | **Precondiciones** | **Efectos** | **Costo** |
 |---|---|---|---|
 | **`MOVE(z_from, z_to)`** | $pos = z_{from} \land z_{to} \in Adj(z_{from}) \land (IsDoor(z_{from}, z_{to}) \implies env[door] = Unlocked) \land bat \ge cost(z_{from}, z_{to})$ | $pos \leftarrow z_{to}$, $bat \leftarrow bat - cost(z_{from}, z_{to})$ | Costo del corredor |
-| **`RECHARGE()`** | $IsRechargeStation(pos) \land bat < B_{max} \land bat \ge cost_{recharge}$ | $bat \leftarrow B_{max}$, $bat \leftarrow bat - cost_{recharge}$ | $cost_{recharge}$ (costo de recarga) |
+| **`RECHARGE()`** | $IsRechargeStation(pos) \land bat < B_{max} \land bat \ge cost_{recharge}$ | Se paga el costo y luego $bat \leftarrow B_{max}$ | $cost_{recharge}$ (costo de recarga) |
 | **`PICKUP(obj_type)`** | $ground[pos][obj_{type}] > 0 \land cargo_{weight}(cargo) + weight(obj_{type}) \le cargo_{capacity} \land bat \ge cost_{pickup}$ | $ground[pos][obj_{type}] \leftarrow ground[pos][obj_{type}] - 1$, $cargo[obj_{type}] \leftarrow cargo[obj_{type}] + 1$, $bat \leftarrow bat - cost_{pickup}$ | $cost_{pickup}$ |
 | **`DROP(obj_type)`** | $cargo[obj_{type}] > 0 \land IsUsefulDropZone(pos, obj_{type}) \land bat \ge cost_{drop}$ | $cargo[obj_{type}] \leftarrow cargo[obj_{type}] - 1$, $ground[pos][obj_{type}] \leftarrow ground[pos][obj_{type}] + 1$, $bat \leftarrow bat - cost_{drop}$ | $cost_{drop}$ |
 | **`INTERACT_UNLOCK_DOOR(door_id)`** | $DoorAt(door_{id}, pos) \land env[door_{id}] = Locked \land RequiredKey(door_{id}) \in cargo \land bat \ge cost_{interact}$ | $env[door_{id}] \leftarrow Unlocked$, $bat \leftarrow bat - cost_{interact}$ (La llave/herramienta no se consume) | $cost_{interact}$ |
 | **`INTERACT_REPAIR_PANEL(panel_id)`** | $PanelAt(panel_{id}, pos) \land env[panel_{id}] = Unrepaired \land RequirementsMet(panel_{id}, cargo, env) \land bat \ge cost_{interact}$ | $env[panel_{id}] \leftarrow Repaired$, consume los materiales requeridos de $cargo$, $bat \leftarrow bat - cost_{interact}$ | $cost_{interact}$ |
+| **`INTERACT_ACTIVATE_STATION(station_id)`** | $StationAt(station_{id}, pos) \land env[station_{id}] = Offline \land DependenciesMet(station_{id}, env) \land bat \ge cost_{interact}$ | $env[station_{id}] \leftarrow Online$, $bat \leftarrow bat - cost_{interact}$ | $cost_{interact}$ |
 
 ### `Applicable` interno vs legalidad del contrato
 
@@ -119,9 +125,11 @@ s  --a-->  s'     solo si a ∈ Applicable(s)
 
 ## Prueba de meta
 
-$$Goal(s) \iff \bigwedge_{p \in TargetPanels} (env[panel_p] == Repaired) \land \bigwedge_{s \in TargetSystems} (env[sys_s] == Active)$$
+$$Goal(s) \iff \bigwedge_{station \in goal.stations\_online} env[station] = Online$$
 
-Las puertas desbloqueadas, las recargas realizadas y las herramientas recogidas son medios transitivos para alcanzar la restauración de la instalación. La misión tiene éxito si y solo si todos los sistemas críticos exigidos por la meta se encuentran activos y reparados en $env$.  
+Los paneles reparados y las dependencias satisfechas son medios para activar las
+estaciones. La misión termina únicamente cuando todas las estaciones indicadas
+por `goal.stations_online` quedan `ONLINE`.
 
 
 ---
@@ -139,14 +147,22 @@ $$g(n) = \sum_{i=1}^{k} cost(a_i)$$
 
 ## Estrategia de búsqueda
 
-Dado que los costos de las acciones son heterogéneos y positivos ($cost(a) > 0$) y se requiere el plan de costo acumulado mínimo, la estrategia seleccionada es Búsqueda de Costo Uniforme (UCS / Uniform Cost Search) (AIMA Cap. 3.4.2), equivalente al algoritmo de Dijkstra en grafos
+Dado que los costos son positivos y heterogéneos, la estrategia final es
+Búsqueda de Costo Uniforme (UCS). La cola OPEN se ordena estrictamente por
+$g(n)$, por lo que la primera meta extraída tiene costo mínimo. La implementación
+puede encontrar antes una solución guía, pero solo la usa como cota superior:
+la respuesta definitiva siempre la decide UCS.
 
 Propiedades y Garantías:
    * Completitud: Garantizada en espacios de estados finitos donde todo costo de acción sea mayor que una constante estricta $\epsilon > 0$.  
-   * Optimalidad: Garantizada siempre que la prueba de meta $Goal(s)$ se realice al extraer el nodo de la cola de prioridad (OPEN), y no al generarlo.  
+    * Optimalidad: Si UCS termina normalmente, está garantizada porque `Goal` se
+       comprueba al extraer el nodo de OPEN y la cola se ordena por $g(n)$. La
+       implementación tiene además un límite de expansiones para proteger el
+       backend; si se alcanza, devuelve una solución válida pero la marca como
+       no certificada como óptima.
    * Estructura de Datos (OPEN y CLOSED): 
-      * OPEN: Cola de prioridad (Min-Heap) ordenada estrictamente por $g(n)$.  
-      * CLOSED: Diccionario/Set de estados canónicos físicos ya extraídos.  
+      * OPEN: Cola de prioridad (Min-Heap) ordenada estrictamente por $g(n)$.
+      * CLOSED: Frontera de pares no dominados de costo y batería por estado físico.
 
 ### Batería como recurso
 
@@ -157,9 +173,11 @@ Si dos rutas alcanzan la misma configuración física del mundo ($pos, cargo, gr
 $$g(n_1) \le g(n_2) \quad \land \quad bat_1 \ge bat_2$$
 
 Manejo en CLOSED:
-En la lista CLOSED, para cada estado físico $(pos, cargo, ground, env)$, se almacena un registro con la mejor combinación observada: (best_g, max_battery). Cuando se genera un sucesor $s_{nuevo}$ cuya configuración física ya existe en CLOSED:
- * Si $g(s_{nuevo}) \ge best\_g$ y $bat(s_{nuevo}) \le max\_battery$, el nodo está estrictamente dominado y se descarta de inmediato.  
- * Esto corta de raíz los rodeos inútiles y evita que la búsqueda explote en memoria tratando cada nivel de batería como un mundo distinto.
+Para cada configuración física $(pos, cargo, ground, env)$ se conserva una
+frontera de pares $(g, bat)$ no dominados. Un par domina a otro si tiene costo
+menor o igual y batería mayor o igual, con al menos una desigualdad estricta.
+Los sucesores dominados se descartan; los demás se agregan y eliminan los pares
+que pasan a estar dominados.
 ---
 
 ## Formulación y tamaño del espacio (obligatorio)

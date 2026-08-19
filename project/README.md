@@ -10,13 +10,13 @@ el `README.MD` de la raíz; las reglas del mundo, en [`../CONTRATO.md`](../CONTR
 ```text
 project/
 ├── frontend/          # React + R3F — simulación 3D voxel
-├── backend/           # FastAPI — POST /api/solve (plan demo)
+├── backend/           # FastAPI — POST /api/solve (agente de búsqueda)
 ├── scenarios/         # scenario.json — fuente de verdad
 ├── design.md
 └── README.md
 ```
 
-## Cómo levantar (tú)
+## Cómo levantar el proyecto
 
 Abre **dos terminales**.
 
@@ -25,9 +25,9 @@ Abre **dos terminales**.
 ```bash
 cd project/backend
 python -m venv .venv
-.\.venv\Scripts\activate
+source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn main:app --app-dir src --port 8000
+uvicorn main:app --app-dir src --reload --port 8000
 ```
 
 Comprobar: http://127.0.0.1:8000/api/health
@@ -42,17 +42,44 @@ npm run dev
 
 Abrir: http://localhost:5173
 
-Pulsa **EXECUTE PLAN**. El frontend llama a `/api/solve` (proxy Vite → puerto 8000) y reproduce el plan casilla a casilla.
+Pulsa **EXECUTE PLAN**. El frontend llama a `/api/solve` mediante el proxy de
+Vite y reproduce el plan casilla a casilla.
 
-Hasta que conecte su agente, `/api/solve` devuelve el plan artesanal de `demo_plan.py` (sin búsqueda). Ese plan existe para probar el frontend: es legal, no es necesariamente el de menor costo, y usa `DROP` porque la capacidad es 3. No tome esos `DROP` como «hay que soltar en cualquier zona»: son un ejemplo de *presión de carga*.
+El endpoint usa `agent.py`. El agente construye estados canónicos, genera
+acciones legales, aplica poda de dominancia de batería y traduce las acciones
+internas al contrato visual. El plan demo permanece en `demo_plan.py` solo como
+referencia y prueba del simulador.
 
-### Tests del plan demo
+### Pruebas del agente
 
 ```bash
 cd project/backend
-.\.venv\Scripts\activate
+source .venv/bin/activate
+python tests/test_agent.py
 python tests/test_demo_plan.py
 ```
+
+Las pruebas verifican legalidad del plan, estados equivalentes, información
+relevante, rutas alternativas, costos y el caso sin solución.
+
+### Respuesta de la API
+
+`POST /api/solve` recibe un escenario JSON y devuelve:
+
+```json
+{
+	"solution_found": true,
+	"total_cost": 99,
+	"steps": [],
+	"message": "...",
+	"optimality_certified": false
+}
+```
+
+`steps` solo contiene las operaciones visuales `MOVE`, `PICKUP`, `DROP` e
+`INTERACT`. Si no existe solución, devuelve `solution_found: false` y
+`steps: []`. La respuesta puede indicar `optimality_certified: false` cuando
+se alcanza el límite de expansiones configurado para proteger el backend.
 
 ## Contrato visual vs agente (importante)
 
